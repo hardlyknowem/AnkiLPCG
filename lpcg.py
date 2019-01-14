@@ -29,11 +29,14 @@ custom_anki_location = ''
 
 ###############################################################################
 
+import argparse
+import csv
 import os
 import sys
 import tempfile
 import traceback
 from subprocess import call
+
 
 def print_help():
     print "    Lyrics/Poetry Cloze Generator v0.9.4"
@@ -42,6 +45,7 @@ def print_help():
     print "    Title:      This will be used to prompt you for the first line of the text."
     print "    Tags:       This will be fed to Anki as the Tags field of each card.\n"
     print "    For further help, see README.md.\n"
+
 
 def get_data(msg, required=True):
     data = ''
@@ -52,8 +56,10 @@ def get_data(msg, required=True):
 
     return data.strip()
 
+
 def next_line(file):
     return (file.readline().rstrip())
+
 
 def locate_anki_executable():
     if custom_anki_location:
@@ -90,6 +96,7 @@ def locate_anki_executable():
         print "*****"
         return None
 
+
 def quotation_strip(string):
     """Remove any single or double quotation marks surrounding string."""
 
@@ -106,6 +113,12 @@ def open_anki(ankipath, anki_file):
 
 def main():
     ankipath = locate_anki_executable()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('lyrics_file', type=argparse.FileType('r'))
+    parser.add_argument('-t', '--tags', nargs='+')
+    args = parser.parse_args()
+
     print_help()
 
     # Open files.
@@ -121,57 +134,60 @@ def main():
         print "*****"
         exit()
 
-    while True:
-        try:
-            input_file = quotation_strip(get_data("Input File"))
-            lyrics_file = open(input_file)
-        except IOError:
-            print "Could not read that file. Are you sure it exists?"
-            continue
-        else:
-            break
-
     # Get metadata.
-    title = get_data("Title")
-    tags = get_data("Tags (optional)", required=False)
+    filename = os.path.splitext(os.path.basename(args.lyrics_file.name))[0]
+    artist, title = filename.split(" - ", 1)
+
+    # Write cards.
+    if (args.tags):
+        anki_file.write("tags:%s\n" % ' '.join(args.tags))
 
     # Find total lines in file for the loop.
-    total_lines = len(lyrics_file.readlines())
-    lyrics_file.seek(0)
+    total_lines = len(args.lyrics_file.readlines())
+    args.lyrics_file.seek(0)
 
-    # Data string to be added to.
-    cards_data = ""
+    # Make the first lines, as they're different from the rest (there aren't
+    # two lines of context to use yet).
+    lyrics_first_line = next_line(args.lyrics_file)
+    lyrics_second_line = next_line(args.lyrics_file)
 
-    # Make the first lines, as they're different from the rest (there aren't two
-    # lines of context to use yet).
-    lyrics_first_line = next_line(lyrics_file)
-    lyrics_second_line = next_line(lyrics_file)
-    lyrics_file.seek(0)
+    writer = csv.writer(anki_file)
+    writer.writerow([
+        "[First Line] (%s - %s)" % (artist, title),
+        lyrics_first_line,
+        title,
+        artist
+    ])
 
-    line1 = "[First Line] (%s)\t%s\n" % (title, lyrics_first_line)
-    line2 = "[Beginning]<br>%s\t%s\n" % (lyrics_first_line, lyrics_second_line)
-    cards_data += line1
-    cards_data += line2
+    writer.writerow([
+        "[Beginning]<br>" + lyrics_first_line,
+        lyrics_second_line,
+        title,
+        artist
+    ])
 
     # Set variables to be used in the loop.
-    context1 = next_line(lyrics_file)
-    context2 = next_line(lyrics_file)
-    current_line = next_line(lyrics_file)
+    args.lyrics_file.seek(0)
+    context1 = next_line(args.lyrics_file)
+    context2 = next_line(args.lyrics_file)
+    current_line = next_line(args.lyrics_file)
 
     # Loop through the remainder of the cards.
     i = 3
     while i <= total_lines:
-        cards_data += "%s<br>%s\t%s\n" % (context1, context2, current_line)
+        writer.writerow([
+            "%s<br>%s" % (context1, context2),
+            current_line,
+            title,
+            artist
+        ])
         context1 = context2
         context2 = current_line
-        current_line = next_line(lyrics_file)
+        current_line = next_line(args.lyrics_file)
         i += 1
 
-    # Write cards.
-    anki_file.write("tags:%s\n" % tags)
-    anki_file.write(cards_data)
     anki_file.close()
-    lyrics_file.close()
+    args.lyrics_file.close()
 
     # Import file to Anki, if a location has been found.
     if ankipath:
